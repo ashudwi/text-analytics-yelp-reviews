@@ -1,5 +1,4 @@
 ---
-title: "HW2"
 author: "Charu Rawat"
 date: "Apr 7, 2019"
 output: html_document
