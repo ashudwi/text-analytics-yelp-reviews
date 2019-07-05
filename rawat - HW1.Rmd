@@ -1,0 +1,349 @@
+---
+title: "HW2"
+author: "Charu Rawat"
+date: "Apr 7, 2019"
+output: html_document
+---
+
+# Text Analytics
+
+```{r global_options, include=FALSE}
+
+# Global options for formatting your output to HTML
+knitr::opts_chunk$set(fig.width=12, fig.height=8, warning=FALSE, message=FALSE)
+```
+
+#1. Introduction
+
+This data consisting of YELP reviews has 5366 reviews from Nov 2005 to Nov 2018 from 5161 unique users.
+The reviews are for the buffet served at 2 restaurants located in Vegas namely - The Bellagio and The MGM Grand.
+The data is granular at the review level. For each review we have attribute such as the userID (a unique identifier given to every user),
+timestamp of the review down to the hour, votes to the review if it was funny,helpful,etc and a rating(star) that a user gives to rate the restaurant buffet. There are instances where the same user has given multiple reviews over the years.
+After removal of records prior to 2015, we are left with 2345 reviews from 2283 unique users from 2015 to Nov 2018 upon which we perform
+all our analysis.
+
+```{r text pre-processing}
+rm(list=ls())
+library(tm)
+library(stringr)
+library(lubridate)
+
+# specify root directory where transcript files are stored
+fdir = "F:/UVA/spring_term/gcom7260_text/lab/data/yelp/"
+# read list of files from directory
+fileList <- list.files(fdir)
+
+# Create empty data frame
+yelp_df <- data.frame(reviewID = rep(NA, length(fileList)), userID = rep(NA, length(fileList)), restaurant = rep(NA, length(fileList)), revDate = rep(NA, length(fileList)), stars = rep(NA, length(fileList)), text = rep(NA, length(fileList)), useful = rep(NA, length(fileList)), funny = rep(NA, length(fileList)), cool = rep(NA, length(fileList)))
+
+# loop through all files and extract data into data frame
+for (i in 1:length(fileList)){
+  # read current document
+  curDoc <- readLines(paste0(fdir, fileList[i]))
+  curDoc <- iconv( curDoc, from = "latin1", to = "ASCII", sub = "" )
+  # read all data into data frame:
+  yelp_df$reviewID[i] <- curDoc[1]
+  yelp_df$userID[i] <- curDoc[2]
+  yelp_df$restaurant[i] <- curDoc[3]
+  yelp_df$revDate[i] <- mdy_hm(curDoc[4])
+  yelp_df$stars[i] <- curDoc[5]
+  yelp_df$text[i] <- curDoc[6]
+  yelp_df$useful[i] <- curDoc[7]
+  yelp_df$funny[i] <- curDoc[8]
+  yelp_df$cool[i] <- curDoc[9]
+   
+ }
+
+# manipulate review date variable to allow for easier analysis
+yelp_df$revDate <- as_datetime(yelp_df$revDate)
+yelp_df$year <- year(yelp_df$revDate)
+yelp_df$month <- month(yelp_df$revDate)
+yelp_df$dayOfWeek <- wday(yelp_df$revDate)
+yelp_df$fullDate <- date(yelp_df$revDate)
+yelp_df$hour <- hour(yelp_df$revDate)
+
+# storing original non-processed data that can be used later for comparison
+orig_yelp_df <- yelp_df
+
+# obtain stats on original data
+# summary(orig_yelp_df)
+
+#_______________________________________Pre-Processing the text data_______________________________________
+
+# Removing reviews which are older than 2015 
+yelp_df <- yelp_df[!(yelp_df$year < 2015),]
+
+# remove numbers from the text column
+yelp_df$text <- gsub("\\d", " ", yelp_df$text, fixed = FALSE)
+
+# removing all punctuation and replacing with a space
+yelp_df$text  <- gsub("[[:punct:]]", " ", yelp_df$text , fixed=F)
+
+# conversion to lower case
+yelp_df$text <- tolower(yelp_df$text)
+
+# remove extra whitespace and collapse multiple space characters to one for the text column
+yelp_df$text <- trimws(stripWhitespace(yelp_df$text))
+
+# obtain stats on processed and filtered data
+# summary(yelp_df)
+
+```
+
+#2. Frequency analysis
+
+I performed a Frequency Analysis over the data treating words as unigrams (word as is) as well as on bi-gram representation of words.
+On evaluating the results from the unigram frequency analysis, I could make certain observations such as words like "food","eat","vegas" have a low tf-idf score as they probably appear in a lot of reviews understandeably. On visualising the wordcloud with the highest tfidf values, words with the highest tf-idf values seem to be words that convey a strong sentiment or feeling such as "amazing" or "savage" or "inappropriate".
+I think that these tf-idf scores could be used to potentially gain insights into what aspects of a buffet are popular or unpopular
+with customers when it comes to reviewing after filtering for adjectives or the data could be used with bigrams to see what words (adjectives) are generally used to describe those aspects (positive or negative connotation).
+I ran a tf-idf over a bigram representation and saw that the top 30 odd bigram phrases have the same tf-idf score. The phrases
+that turn up in the wordcloud with the highest tf-idf scores are for example - "elegant presentation","overly priced","outrageous prices",
+"beauful deserts","waiting line",etc. These phrases give meaningful insights such as people tend to talk about tasty deserts
+and annoying waiting lines in ther review. Pricing is a recurring theme in the reviews that seems to bother people enough to write about in their reviews.
+While the unigram tf-idf was hepful, I felt that the bigram tf-idf or the bigram frequency analysis gave more context to the results making the insights more meaningful.
+
+```{r frequency analysis}
+library(tidytext)
+library(dplyr)
+library(textstem)
+library(wordcloud)
+
+#_______________________________________Frequency Analysis on unigrams ~ words as is_______________________________________
+
+# Tokenize by word and store into df called yelp_words
+yelp_words <- yelp_df %>%
+  unnest_tokens(word, text)
+
+# create custom dictionary of stopwords called "mystopwords"
+mystopwords <- data.frame(word = c("bellagio","mgm","buffet","vegas"))
+
+# lemmatize, remove stopwords and custom stop words, count, then bind tf_idf 
+yelp_words <- yelp_words %>%
+  mutate(word = lemmatize_words(yelp_words$word)) %>%
+  anti_join(stop_words) %>%
+  anti_join(mystopwords) %>%
+  count(reviewID, word, sort = TRUE) %>%
+  bind_tf_idf(word, reviewID, n) %>%
+  arrange(desc(tf_idf))
+
+# Visualizing WORDCLOUD that displays top 50 words with highest tfidf scores
+wordcloud(yelp_words$word, yelp_words$tf_idf, max.words=50, random.order=F, scale = c(2.5,.1),colors = brewer.pal(8, "Dark2"))
+
+#_______________________________________Frequency Analysis on bigrams_______________________________________
+
+# TFIDF with bigram
+library(tidyr)
+
+# tokenize original "docDF" dataframe into bigrams and count frequencies of the bigrams
+yelp_bigram <- yelp_df %>%
+  unnest_tokens(bigram, text, token="ngrams", n=2) %>%
+  count(reviewID, bigram, sort = TRUE)
+
+# Removal of stop words
+yelp_bigram_split <- yelp_bigram %>%
+  separate(bigram, c("word1", "word2"), sep = " ")
+# Evaluate the split dataset and keep only those rows where neither word appears in the stop word list
+yelp_bigram_filtered <- yelp_bigram_split %>%
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word2 %in% stop_words$word)
+# Evaluate the filtered dataset and keep only those rows where neither word appears in our custom stop word list
+yelp_bigram_filtered <- yelp_bigram_filtered %>%
+  filter(!word1 %in% mystopwords$word) %>%
+  filter(!word2 %in% mystopwords$word)
+# copy back into the original data frame
+yelp_bigram <- yelp_bigram_filtered %>%
+  unite(bigram, word1, word2, sep = " ")
+
+# Compute tf-idf for the bigram data set
+yelp_bigram <- yelp_bigram %>%
+  bind_tf_idf(bigram, reviewID, n) %>%
+  arrange(desc(tf_idf))
+
+# Visualizing WORDCLOUD that displays top 30 bigram phrases with highest tfidf scores
+pal=brewer.pal(8,"Blues")
+pal=pal[-(1:3)]
+wordcloud(yelp_bigram$bigram, yelp_bigram$tf_idf, max.words=30, random.order=F, scale = c(1.2, 0.2),colors = pal)
+# no color distinction in the wordcloud because of same tfidf scores
+```
+
+#3. Sentiment Analysis - Lexicon Selection
+
+For the sentiment analysis, I chose to analyze sentiment using the lexicons - SenticNet and slangSD.
+While researching upon the various lexicons available for sentiment analysis, I read that the framework for SenticNet is designed to focus on sentence structure and it maintains the semantic-preservation representation of natural language concepts.  It is also often used for big social data analysis especially for trend discovery and social media marketing. Keeping these points in mind,I thought that this lexicon could be of value here considering the source of these YELP reviews. I chose slangSD as the other lexicon to analyze as slangSD was built primarily with the goal to analyze online user-generated content that is usually short and informal. It is built upon a dictionary of slang words to aid sentiment analysis of social media content.Through the frequency analysis,I did come across words that seemed like slangs and hence I thought that it this lexicon could potentially be usefulin this case. I do think that if i had more additional information in the data such as the age of users, I would have more confidence in deciding whether to choose this lexicon or not considering that slangs are generally used by a younger population.
+
+Insights - On plotting the sentiment scores from each lexicon over time, I observed that generally the daily avg sentiment is higher using the lexicon
+senticNet vs slangSD. The avg sentiment for slangSD is closer to 0 and has a smaller spread compared to senticNet.
+The same trends can be seen when the avg sentiment is looked cross all reviews individually. Based on these trends itself, it is evident that
+senticNet would be a better option to choose. I performed some additional analyses to gain confidence in my decision.
+I used star (rating for each review) as an indication of a user sentiment and plotted the distribution of reviews across the star ratings against
+the sentiment scores. The idea was to get a plot where as the star rating goes from 5 to 0, the distribution of ratings across the sentiment score spectrum moves from +1 to -1. What I observed from the ridgeplot is that for the lexicon slangSD there was barely any shift in the distrituion whereas for senticNet we do see a shift in the ratings which  points to the fact that senticNet is able to cature the changing feeling or sentiment in the reviews to a certain extent. I also extracted words from the reviews that are used to calulate the sentiment and observed that for slangSD most of the words are getting classifed as neutral , which explains why most of the reviews have a sentiment score close to 0. This probably indicates that not many slang words were actally used in the reviews contrary to what I thought earlier. My final step wa to tune the sentiment alayzers to see if the results improve but i didnt come across much change for either of the analyzers. Based on these above findings I concluded to go ahead with the senticNet analyzer as opposed to slangSD.
+
+
+```{r lexicon selection}
+
+library(sentimentr)
+library(lexicon)
+library(ggplot2)
+library(reshape2)
+
+#_______________________________________Processing the data for Sentiment Analysis_______________________________________
+
+# Use original yelp dataframe and perform minimal processing on the text data
+yelp_df_sentiment <- orig_yelp_df
+
+# filter data to exclude records prior to 2015
+yelp_df_sentiment <- yelp_df_sentiment[!(yelp_df_sentiment$year < 2015),]
+
+# remove numbers from the text column
+yelp_df_sentiment$text <- gsub("\\d", " ", yelp_df_sentiment$text, fixed = FALSE)
+
+# remove all occurrences of slashes
+yelp_df_sentiment$text  <- gsub("\\\"", "", yelp_df_sentiment$text , fixed = FALSE) 
+yelp_df_sentiment$text  <- gsub("/", "", yelp_df_sentiment$text , fixed = FALSE) 
+
+# lemmatize text
+yelp_df_sentiment$text <- lemmatize_strings(yelp_df_sentiment$text)
+
+# remove extra whitespace and collapse multiple space characters to one for the text column
+yelp_df_sentiment$text <- trimws(stripWhitespace(yelp_df_sentiment$text))
+
+#_______________________________________Using the Lexicons - SENTICNET and SLANGSD_______________________________________
+
+# compute sentiment scores using senticnet lexicon
+senticnet_sentiment <- sentiment(get_sentences(yelp_df_sentiment), polarity_dt = hash_sentiment_senticnet,
+valence_shifters_dt = lexicon::hash_valence_shifters)
+
+# compute sentiment scores using slangsd lexicon
+slangsd_sentiment <- sentiment(get_sentences(yelp_df_sentiment), polarity_dt = hash_sentiment_slangsd,
+valence_shifters_dt = lexicon::hash_valence_shifters)
+
+# combine sentiment scores into a single data frame
+all_sentiment <- senticnet_sentiment 
+colnames(all_sentiment)[18] <- "senticnet"
+all_sentiment <- left_join(all_sentiment, slangsd_sentiment)
+colnames(all_sentiment)[19] <- "slangsd"
+
+# Melt the dataframe
+melted_sentiment <- melt(all_sentiment, id.vars = c( "reviewID","userID","restaurant","revDate","stars","text","useful","funny",
+                                          "cool","year","month","dayOfWeek","fullDate","hour","element_id","sentence_id","word_count" ))
+
+#_______________________________________ Visualizing the sentiment to compare the 2 lexicons_______________________________________
+
+windowsFonts(Arial=windowsFont("TT Arial")) 
+library(ggplot2)
+library(reshape2)
+library(hrbrthemes)
+library(viridis)
+library(ggridges)
+
+
+# Plot the sentiment scores from each lexicon over time
+# BY DAY
+melted_sentiment %>%
+  group_by(fullDate, variable) %>%
+  summarize(value = average_downweighted_zero(value)) %>%
+  ggplot(aes(x = fullDate, y = value, color = variable))+
+  geom_line(show.legend = TRUE) + ggtitle("Sentiment Comparison by Lexicon for each Day")
+
+
+# BY REVIEW ~ element_id
+melted_sentiment %>%
+  group_by(element_id, variable) %>%
+  summarize(value = average_downweighted_zero(value)) %>%
+  ggplot(aes(x = element_id, y = value, color = variable))+
+  geom_line(show.legend = TRUE) + ggtitle("Sentiment Comparison by Lexicon for each Review")
+
+#_______________________________________ Additional analyses_______________________________________
+
+# PART I - Using star as proxy for sentiment, we can see the distribution for ratings across the stars
+# eg - we should ideally see for star = 5 , the distribution skewed more towards the right (higher sentiment)
+# the skew should shift from right to left as the stars keep going down, as lower star should imply a negative sentiment
+melted_sentiment %>%
+  group_by(element_id,variable,stars) %>%
+  summarize(value = average_downweighted_zero(value)) %>%
+  ggplot(aes(y=stars, x=value,  fill=variable)) +
+    geom_density_ridges(alpha=0.6,bandwidth = 0.01) +
+    scale_fill_viridis(discrete=TRUE) +
+    scale_color_viridis(discrete=TRUE) +
+    theme_ipsum() +
+    theme(text=element_text(size=8,  family="Arial")) +
+    xlab("Avg Sentiment") +
+    ylab("Assigned Probability (%)")
+
+# PART II - Extract words that to calculate sentiment scores and evaluate the word list to explain differences in sentiment scores across lexicons
+sent_terms_senticnet <- extract_sentiment_terms(get_sentences(yelp_df_sentiment$text), polarity_dt = hash_sentiment_senticnet,  valence_shifters_dt = lexicon::hash_sentiment_senticnet)
+
+sent_terms_slangsd <- extract_sentiment_terms(get_sentences(yelp_df_sentiment$text), polarity_dt = hash_sentiment_slangsd,  valence_shifters_dt = lexicon::hash_sentiment_slangsd)
+
+
+# PART III - Tuning both sentiment analyzers to see if results improve
+senticnet_sentiment_tuned <- sentiment(get_sentences(yelp_df_sentiment), polarity_dt = hash_sentiment_senticnet,
+valence_shifters_dt = lexicon::hash_valence_shifters,n.before = 2, n.after = 1, amplifier.weight = .5, adversative.weight = .25)
+
+slangsd_sentiment_tuned <- sentiment(get_sentences(yelp_df_sentiment), polarity_dt = hash_sentiment_slangsd,
+valence_shifters_dt = lexicon::hash_valence_shifters,n.before = 2, n.after = 1, amplifier.weight = .5, adversative.weight = .25)
+
+# combine sentiment scores into a single data frame
+all_sentiment_tuned <- senticnet_sentiment_tuned 
+colnames(all_sentiment_tuned)[18] <- "senticnet"
+all_sentiment_tuned <- left_join(all_sentiment_tuned, slangsd_sentiment_tuned)
+colnames(all_sentiment_tuned)[19] <- "slangsd"
+
+melted_sentiment_tuned <- melt(all_sentiment_tuned, id.vars = c( "reviewID","userID","restaurant","revDate","stars","text","useful","funny",
+                                                     "cool","year","month","dayOfWeek","fullDate","hour","element_id","sentence_id","word_count" ))
+# Plot the sentiment scores from each lexicon over time
+# BY REVIEW ~ element_id
+melted_sentiment_tuned %>%
+  group_by(element_id, variable) %>%
+  summarize(value = average_downweighted_zero(value)) %>%
+  ggplot(aes(x = element_id, y = value, color = variable))+
+  geom_line(show.legend = TRUE) + ggtitle("Sentiment Comparison by Lexicon for each Review after Tuning")
+
+```
+
+#4. Sentiment Analysis Results & Interpretation
+
+Takeaways - The yearly avg sentiment for both the restaurants is roughly the same. It's slightly higher for The Bellagio though it remains below 0.25 for both.
+By visualising this sentiment evolve through the years, it's interesting to see that for Bellagio the sentiment has progressively gone down
+over the years while for MGM it went up in 2017 after declining in 2016, and again has gone down in 2018.
+By looking at the daily avg sentiment of reviews only for "brunch", it's tough to point out a specific trend or a pattern
+that helps distinguish between both the restaurants becuse of the spikes, but we do see that on certain days the sentiment goes beyond +1.
+On smoothening the data/spike in the data, we can observe that there is more variation in the scores for MGM. We also observe that in the earlier half of 2018, MGM had a lower daily avg sentiment but in the second half we can see it increase significantly relative to the Bellagio.
+
+
+```{r sentiment analysis}
+
+# The average sentiment score for The Buffet at Bellagio vs. the MGM Grand Buffet 
+senticnet_sentiment %>%
+  group_by(restaurant) %>%
+  summarize(sentiment = average_downweighted_zero(sentiment)) %>%
+  ggplot(aes(restaurant,sentiment))+
+  ylim(-0.05,1) +
+  geom_col(show.legend = TRUE)  + ggtitle("Sentiment Comparison by Lexicon for each Restaurant")
+
+
+# The sentiment by buffet over time
+senticnet_sentiment %>%
+  group_by(restaurant,year) %>%
+  summarize(sentiment = average_downweighted_zero(sentiment)) %>%
+  ggplot(aes(year, sentiment,group = restaurant,color = restaurant))+
+   ylim(0,0.5) +
+  geom_line(show.legend = TRUE)
+
+# Displaying the sentiments for those reviews that mention "brunch"
+senticnet_sentiment %>%
+  filter(str_detect(text, "brunch")) %>%
+  group_by(fullDate,restaurant) %>%
+  summarize(sentiment = average_downweighted_zero(sentiment)) %>%
+  ggplot(aes(fullDate, sentiment,group = restaurant,color = restaurant))+
+  geom_line(show.legend = TRUE) 
+
+# Smoothening the data
+senticnet_sentiment %>%
+  filter(str_detect(text, "brunch")) %>%
+  group_by(fullDate,restaurant) %>%
+  summarize(sentiment = average_downweighted_zero(sentiment)) %>%
+  ggplot(aes(fullDate, sentiment,group = restaurant,color = restaurant))+
+  stat_smooth(aes(x = fullDate, y = sentiment,colour = restaurant),span = 0.1,se = FALSE)
+
+```
